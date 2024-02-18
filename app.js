@@ -18,7 +18,7 @@ app.use(cookieParser('123456'));
 app.use(express.json());
 
 const corsOptions = {
-    "origin": "http://127.0.0.1:5173",
+    "origin": "http://localhost:5173",
     "methods": "GET,HEAD,PUT,PATCH,POST,DELETE",
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -73,7 +73,7 @@ const messages = [
 // Create Socket.io Server
 const io = new Server(httpServer, {
     cors: {
-      origin: ["http://127.0.0.1:5500", "http://127.0.0.1:5173"]
+      origin: ["http://localhost:5500", "http://localhost:5173"]
     }
 });
 
@@ -106,18 +106,20 @@ io.on("connection", (socket) => {
     socket.on(SocketEventType.Subscribe, (uuid) => {
         // 檢查 User
         const user = users.find(data => data.uuid === uuid);
-        if(!user) return;
+        if (!user) return;
 
         // Socket 訂閱 User
         socket.user = user;
 
         // 檢查是否已在在線用戶名單上
         const isInOnlineUser = onlineUsers.some(data => user.username === data.username);
-        if(!isInOnlineUser) {
+        if (!isInOnlineUser) {
             // User 加入 Online 名單中
             const userData = {
                 username: user.username,
-                nickname: user.nickname
+                nickname: user.nickname,
+                uuid: socket.id
+
             }
             onlineUsers.push(userData);
 
@@ -128,10 +130,10 @@ io.on("connection", (socket) => {
 
     // sendMessage: 當此用戶發送訊息的時候，先把新訊息放到 messages 陣列裡面, 再 emit 給所有用戶
     socket.on(SocketEventType.SendMessage, function (message) {
-        if(!socket.user) return;
+        if (!socket.user) return;
         // 重新封裝訊息
         const userMessage = {
-            id: messages.length+1,
+            id: messages.length + 1,
             username: socket.user.username,
             nickname: socket.user.nickname,
             message: message,
@@ -154,6 +156,34 @@ io.on("connection", (socket) => {
         socket.user = undefined;
         io.sockets.emit(SocketEmitEventType.OnlineUsers, onlineUsers);
     });
+
+    // Web Rtc 通話
+
+    // 監聽 Offer 事件
+    socket.on('offer', (offer, targetUserId) => {
+        console.log(`收到 ${socket.id} offer 給 ${targetUserId}`);
+        // 轉發 Offer 給目標用戶
+        socket.to(targetUserId).emit('offer', offer, socket.id);
+    });
+
+    // 監聽 Answer 事件
+    socket.on('answer', (answer, targetUserId) => {
+        console.log(`收到 ${socket.id} answer 給 ${targetUserId}`);
+        // 轉發 Answer 給目標用戶
+        socket.to(targetUserId).emit('answer', answer);
+    });
+
+    // 監聽 ICE Candidate 事件
+    socket.on('ice-candidate', (candidate, targetUserId) => {
+        console.log(`收到 ${socket.id} ICE candidate 給 ${targetUserId}`);
+        // 轉發 ICE Candidate 給目標用戶
+        socket.to(targetUserId).emit('ice-candidate', candidate);
+    });
+
+    // 監聽斷開連接事件
+    // socket.on('disconnect', () => {
+    //     console.log('用戶斷開連接');
+    // });
 });
 
 
@@ -164,19 +194,26 @@ io.on("connection", (socket) => {
 
 // Handling expired tokens
 app.use(expressjwt({
-     secret: secretKey,
-     algorithms: ['HS256'],
-     getToken: (req) => {
+    secret: secretKey,
+    algorithms: ['HS256'],
+    getToken: (req) => {
         const token = req.cookies.accessToken;
         if (token) {
-          return token;
+            return token;
+        } else {
+            // 從 Authorization 標頭中獲取 token
+            const authHeader = req.headers.authorization;
+            if (authHeader && authHeader.split(' ')[0] === 'Bearer') {
+                return authHeader.split(' ')[1];
+            }
         }
         return null;
-      },
-     onExpired: async (req, err) => {
+    },
+    onExpired: async (req, err) => {
         if (new Date() - err.inner.expiredAt < 5000) { return; }
         throw err;
-    }}
+    }
+}
 ).unless({ path: [/^\/api\//] }));
 
 // Error handling
@@ -200,12 +237,12 @@ app.post('/api/register', (req, res) => {
     const { username, password, nickname } = payload;
 
     try {
-        if(!username || !password || !nickname) throw new Error('資料錯誤');
+        if (!username || !password || !nickname) throw new Error('資料錯誤');
 
         // Find User
         const hasUser = users.some(user => user.username === username);
         // Validate
-        if(hasUser) throw new Error('已有相同用戶，無法建立');
+        if (hasUser) throw new Error('已有相同用戶，無法建立');
         // Create User
         const user = {
             uuid: uuidv4(),
@@ -222,14 +259,14 @@ app.post('/api/register', (req, res) => {
         };
 
         const token = jwt.sign(userData, secretKey, { expiresIn: '2 days' });
-    
-        res.cookie('accessToken', token, { httpOnly: true, maxAge: 60*1000*60*24, sameSite: 'none', secure: true });
+
+        res.cookie('accessToken', token, { httpOnly: true, maxAge: 60 * 1000 * 60 * 24, sameSite: 'none', secure: true });
 
         res.status(200).send({
             message: "註冊成功!",
             token,
         });
-    } catch(e) {
+    } catch (e) {
         res.status(400).send({
             message: e.message,
         });
@@ -239,14 +276,14 @@ app.post('/api/register', (req, res) => {
 /** Login Api */
 app.post('/api/login', (req, res) => {
     const payload = req.body;
-    const {username, password} = payload;
+    const { username, password } = payload;
 
     try {
         const user = users.find(data => data.username === username);
-        if(!user) throw new Error('查無用戶');
-    
-        if(user.password !== password) throw new Error('密碼錯誤');
-        
+        if (!user) throw new Error('查無用戶');
+
+        if (user.password !== password) throw new Error('密碼錯誤');
+
         const userData = {
             uuid: user.uuid,
             username: user.username,
@@ -254,14 +291,14 @@ app.post('/api/login', (req, res) => {
         };
 
         const token = jwt.sign(userData, secretKey, { expiresIn: '2 days' });
-    
-        res.cookie('accessToken', token, { httpOnly: true, maxAge: 60*1000*60*24, sameSite: 'none', secure: true });
+
+        res.cookie('accessToken', token, { httpOnly: true, maxAge: 60 * 1000 * 60 * 24, sameSite: 'none', secure: true });
 
         res.status(200).send({
             message: "登入成功!",
             token,
         });
-    } catch(e) {
+    } catch (e) {
         res.status(400).send({
             message: e.message,
         });
@@ -280,7 +317,7 @@ app.get("/user", (req, res) => {
 
     try {
         const user = users.find(data => data.username === auth.username);
-        if(!user) throw new Error('查無用戶');
+        if (!user) throw new Error('查無用戶');
 
         res.status(200).send({
             message: "獲取使用者資料成功",
