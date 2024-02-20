@@ -18,7 +18,7 @@ app.use(cookieParser('123456'));
 app.use(express.json());
 
 const corsOptions = {
-    "origin": "http://localhost:5173",
+    "origin": ["http://localhost:5173", "http://172.25.137.10:5173/"],
     "methods": "GET,HEAD,PUT,PATCH,POST,DELETE",
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
@@ -73,7 +73,7 @@ const messages = [
 // Create Socket.io Server
 const io = new Server(httpServer, {
     cors: {
-      origin: ["http://localhost:5500", "http://localhost:5173"]
+      origin: ["http://localhost:5500", "http://localhost:5173", "http://172.25.137.10:5173/"]
     }
 });
 
